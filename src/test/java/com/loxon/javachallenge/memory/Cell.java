@@ -3,9 +3,7 @@ package com.loxon.javachallenge.memory;
 import com.loxon.javachallenge.memory.api.MemoryState;
 import com.loxon.javachallenge.memory.api.Player;
 
-import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
 
 public class Cell {
@@ -18,10 +16,10 @@ public class Cell {
     private Player owner;
     private MemoryState state;
     private Integer id;
-    boolean isFortifying = false;
+    private boolean isFortifying = false;
 
-    Set<Cell> swapHistory = new HashSet<>();
-    static Set<Cell> swapCorruptions = new HashSet<>();
+    private Set<Cell> swapHistory = new HashSet<>();
+    private static Set<Cell> swapCorruptions = new HashSet<>();
 
     public static void clearSwapHistory() {
         swapCorruptions.clear();
@@ -34,19 +32,16 @@ public class Cell {
         return writeCount < 2;
     }
 
-    boolean isPermanent() {
+    private boolean isPermanent() {
         return state == MemoryState.SYSTEM ||
                state == MemoryState.FORTIFIED;
     }
 
-    boolean canWrite() {
-        if (isPermanent()) {
-            return false;
-        }
+    private boolean canWrite() {
+        if (isPermanent()) return false;
 
         if (writeCount != 0) {
             this.state = MemoryState.CORRUPT;
-
             return false;
         }
         else {
@@ -54,6 +49,7 @@ public class Cell {
             return true;
         }
     }
+
     void resetWrites() {
         swapHistory.clear();
         writeCount = 0;
@@ -153,6 +149,7 @@ public class Cell {
     // megcsereli a cellak adatait. Eleg lenne
     // ID-t cserelni, ha nem ez alapjan lennenek
     // indexelve a jatekban (array index == id)
+    @Deprecated
     public void swap(Cell c) {
         if (canWrite() && c.canWrite()) {
             Player playerTemp = c.owner;
@@ -175,6 +172,28 @@ public class Cell {
         } else {
             this.corruptSwap();
             c.corruptSwap();
+        }
+    }
+
+    // csereljuk ki oket az arrayben + az id-juket
+    // igy nem kell tagonket masolgatni (ha meg esetleg
+    // adnank hozza fieldeket), viszont kozvetlenul
+    // bele kell nyulni a cella arraybe :/
+    public void swap2(final Integer targetID, Cell[] grid) {
+        Cell c = grid[targetID];
+
+        if (canWrite() && c.canWrite()) {
+            grid[targetID] = this;
+            grid[this.id] = c;
+
+            c.id = this.id;
+            c.swapHistory.add(this);
+
+            this.id = targetID;
+            this.swapHistory.add(c);
+        } else {
+            c.corruptSwap();
+            this.corruptSwap();
         }
     }
 

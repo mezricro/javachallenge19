@@ -14,7 +14,10 @@ import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 public class GameImplementation implements Game {
-    private List<RegisteredPlayer> players = new ArrayList<>();
+//    private List<RegisteredPlayer> players = new ArrayList<>();
+
+    // nem kell kulon osztaly, meg igy gyorsabb is
+    private Map<Player, Boolean> playersSet = new HashMap<>();
     private Cell[] cells;
 
     private int maxRounds;
@@ -22,8 +25,8 @@ public class GameImplementation implements Game {
 
     @Override
     public Player registerPlayer(String name) {
-        RegisteredPlayer p = new RegisteredPlayer(name);
-        players.add(p);
+        Player p = new Player(name);
+        playersSet.put(p, true);
         return p;
     }
 
@@ -42,58 +45,20 @@ public class GameImplementation implements Game {
         }
     }
 
-    // CommandType-kent adja vissza a parancs tipusat,
-    // hogy konnyebben lehessen kezelni
-    CommandType getCommandType(Command c) {
-        Class cls = c.getClass();
-
-        if (cls == CommandAllocate.class) {
-            return CommandType.ALLOCATE;
-        }
-        else if (cls == CommandFortify.class) {
-            return CommandType.FORTIFY;
-        }
-        else if (cls == CommandFree.class) {
-            return CommandType.FREE;
-        }
-        else if (cls == CommandRecover.class) {
-            return CommandType.RECOVER;
-        }
-        else if (cls == CommandScan.class) {
-            return CommandType.SCAN;
-        }
-        else if (cls == CommandStats.class) {
-            return CommandType.STATS;
-        }
-        else if (cls == CommandSwap.class) {
-            return CommandType.SWAP;
-        }
-
-        return CommandType.UNKNOWN;
-    }
-
-    boolean validatePlayer(final Command c) {
-        // ignore unregistered players
-        if (c.getPlayer().getClass() != RegisteredPlayer.class) {
+    private boolean validatePlayer(final Command c) {
+        Player p = c.getPlayer();
+        if (playersSet.containsKey(p) && playersSet.get(p)) {
+            playersSet.replace(p, false);
+            return true;
+        } else {
             return false;
         }
-
-        // check if current player can play
-        RegisteredPlayer p = (RegisteredPlayer)c.getPlayer();
-        if (!p.canPlay) {
-            return false;
-        }
-        else {
-            p.canPlay = false;
-        }
-
-        return true;
     }
 
     // megmondja, h az adott parancs ervenyes-e
     // * scan ervenyes, ha jo az intervallum
     // * iro parancsok ervenyesek, ha megfelelo a parameterek szam + erteke
-    boolean validateCommand(Command c, CommandType type) {
+    private boolean validateCommand(Command c, CommandType type) {
         switch (type) {
             case SCAN:
                 Integer cell = ((CommandScan)c).getCell();
@@ -149,48 +114,34 @@ public class GameImplementation implements Game {
         return true;
     }
 
-    Cell[] getBlock(int cellId) {
-        Cell[] block = new Cell[4];
+    private List<MemoryState> getBlockStates(int cellId, Player p) {
+        List<MemoryState> states = new ArrayList<>(4);
 
-        int i = 0;
         for (Cell c : cells)
             if (c.getBlock() == cellId / 4)
-                block[i++] = c;
-
-        return block;
-    }
-
-    List<MemoryState> getBlockStates(int cellId, Player p) {
-        Cell[] cells = getBlock(cellId);
-
-        List<MemoryState> states = new ArrayList<>(4);
-        for (int i = 0; i < 4; i++) {
-            states.add(cells[i].getState(p));
-        }
+                states.add(c.getState(p));
 
         return states;
     }
 
     // scan - mindig valid, ha jo az index, de csak a kor vegen fut
-    ResponseScan executeScan(CommandScan scan) {
+    private ResponseScan executeScan(CommandScan scan) {
         if (validateCommand(scan, CommandType.SCAN)) {
+            // a blokk elso cellaja
             Integer firstCell = scan.getCell();
             firstCell = firstCell - (firstCell % 4);
 
             Player p = scan.getPlayer();
             return new ResponseScan(
-                p, firstCell, getBlockStates(firstCell, p)
-            );
+                p, firstCell, getBlockStates(firstCell, p));
         } else {
             return new ResponseScan(
-                    scan.getPlayer(), -1, Collections.emptyList()
-            );
+                scan.getPlayer(), -1, Collections.emptyList());
         }
-
     }
 
     // stats - mindig valid, NEM a kor vegen fut!
-    ResponseStats executeStats(CommandStats stats) {
+    private ResponseStats executeStats(CommandStats stats) {
         ResponseStats s = new ResponseStats(stats.getPlayer());
 
         int allocated = 0;
@@ -248,7 +199,7 @@ public class GameImplementation implements Game {
 
     // kozos begin function, csak a cellan torteno modositas
     // valtozik (tipustol fuggoen)
-    boolean beginGeneral(
+    private boolean beginGeneral(
             CommandGeneral cmd,
             CommandType type,
             Consumer<Cell> beginAction) {
@@ -264,34 +215,34 @@ public class GameImplementation implements Game {
         }
     }
 
-    boolean beginAlloc(CommandAllocate alloc) {
+    private boolean beginAlloc(CommandAllocate alloc) {
         return beginGeneral(alloc, CommandType.ALLOCATE,
                 (cell) -> { cell.allocate(alloc.getPlayer()); });
     }
 
-    boolean beginFree(CommandFree free) {
+    private boolean beginFree(CommandFree free) {
         return beginGeneral(free, CommandType.FREE,
                 (cell) -> { cell.free(); });
     }
 
-    boolean beginRecover(CommandRecover rec) {
+    private boolean beginRecover(CommandRecover rec) {
         return beginGeneral(rec, CommandType.RECOVER,
                 (cell) -> { cell.recover(rec.getPlayer()); });
     }
 
-    boolean beginFortify(CommandFortify fort) {
+    private boolean beginFortify(CommandFortify fort) {
         return beginGeneral(fort, CommandType.RECOVER,
                 (cell) -> { cell.beginFortify(); });
     }
 
-    boolean beginSwap(CommandSwap swap) {
+    // swap nem beginGeneral alapu
+    private boolean beginSwap(CommandSwap swap) {
         if (validateCommand(swap, CommandType.SWAP)) {
             List<Integer> sw = swap.getCells();
 
-            Cell c1 = cells[sw.get(0)];
-            Cell c2 = cells[sw.get(1)];
-
-            c1.swap(c2);
+            Integer c1 = sw.get(0);
+            Integer c2 = sw.get(1);
+            cells[c1].swap2(c2, cells);
 
             return true;
         } else {
@@ -300,7 +251,7 @@ public class GameImplementation implements Game {
     }
 
     // kozos finalize function, csak a siker feltetelet kell megadni
-    ResponseSuccessList finalizeGeneral(
+    private ResponseSuccessList finalizeGeneral(
             CommandGeneral c,
             boolean valid,
             Predicate<Cell> successCondition) {
@@ -318,7 +269,7 @@ public class GameImplementation implements Game {
         return new ResponseSuccessList(c.getPlayer(), succ);
     }
 
-    ResponseSuccessList finalizeAlloc(CommandAllocate alloc, boolean valid) {
+    private ResponseSuccessList finalizeAlloc(CommandAllocate alloc, boolean valid) {
         return finalizeGeneral(alloc, valid,
                 (cell) -> {
                     return cell.getOwner() == alloc.getPlayer() &&
@@ -326,7 +277,7 @@ public class GameImplementation implements Game {
                 });
     }
 
-    ResponseSuccessList finalizeFree(CommandFree free, boolean valid) {
+    private ResponseSuccessList finalizeFree(CommandFree free, boolean valid) {
         return finalizeGeneral(free, valid,
                 (cell) -> {
                     return cell.validWrite() &&
@@ -334,7 +285,7 @@ public class GameImplementation implements Game {
                 });
     }
 
-    ResponseSuccessList finalizeRecover(CommandRecover rec, boolean valid) {
+    private ResponseSuccessList finalizeRecover(CommandRecover rec, boolean valid) {
         return finalizeGeneral(rec, valid,
                 (cell) -> {
                     return cell.validWrite() &&
@@ -342,14 +293,14 @@ public class GameImplementation implements Game {
                 });
     }
 
-    ResponseSuccessList finalizeFortify(CommandFortify fort, boolean valid) {
+    private ResponseSuccessList finalizeFortify(CommandFortify fort, boolean valid) {
         return finalizeGeneral(fort, valid,
                 (cell) -> {
                     return cell.finishFortify();
                 });
     }
 
-    ResponseSuccessList finalizeSwap(CommandSwap swap, boolean valid) {
+    private ResponseSuccessList finalizeSwap(CommandSwap swap, boolean valid) {
         return finalizeGeneral(swap, valid,
                 (cell) -> {
                     return cell.successfulySwapped();
@@ -371,17 +322,17 @@ public class GameImplementation implements Game {
 
         Cell.clearSwapHistory();
 
-        for (RegisteredPlayer p : players)
-            p.canPlay = true;
+        //TODO use iterator to reset player status
+        for (Map.Entry<Player, Boolean> e : playersSet.entrySet())
+            e.setValue(true);
 
         // evaluate commands and respond
-        Set<EvaluatedCommand> evaluated = beginExecute2(requests);
+        Set<EvaluatedCommand> evaluated = beginExecute(requests);
 
-        //TODO a scanneknek valahogy minden utan kene jonnis
-        return finalizeRespond2(evaluated);
+        return finalizeRespond(evaluated);
     }
 
-    PlayerScore calculateScore(RegisteredPlayer p) {
+    private PlayerScore calculateScore(Player p) {
         PlayerScore score = new PlayerScore(p);
 
         int fortified = 0;
@@ -428,48 +379,78 @@ public class GameImplementation implements Game {
 
     // a kiertekelesek eltarolasa (+ HasSet olvasas)
     // egy kicsit felgyorsitja a dolgot, meg jobban olvashato is lesz
-    class EvaluatedCommand {
-        public EvaluatedCommand(Command command, CommandType type) {
+    private class EvaluatedCommand {
+        final CommandType type;
+        final Command command;
+        public boolean isValid;
+
+        public EvaluatedCommand(Command command) {
             this.command = command;
-            this.type = type;
+            this.type = getCommandType(command);
         }
 
-        public Command command;
-        public boolean valid;
-        public CommandType type;
+        // CommandType-kent adja vissza a parancs tipusat,
+        // hogy konnyebben lehessen kezelni
+        private CommandType getCommandType(Command c) {
+            Class cls = c.getClass();
+
+            if (cls == CommandAllocate.class) {
+                return CommandType.ALLOCATE;
+            }
+            else if (cls == CommandFortify.class) {
+                return CommandType.FORTIFY;
+            }
+            else if (cls == CommandFree.class) {
+                return CommandType.FREE;
+            }
+            else if (cls == CommandRecover.class) {
+                return CommandType.RECOVER;
+            }
+            else if (cls == CommandScan.class) {
+                return CommandType.SCAN;
+            }
+            else if (cls == CommandStats.class) {
+                return CommandType.STATS;
+            }
+            else if (cls == CommandSwap.class) {
+                return CommandType.SWAP;
+            }
+
+            return CommandType.UNKNOWN;
+        }
     }
 
-    Set<EvaluatedCommand> beginExecute2(Command[] commands) {
+    private Set<EvaluatedCommand> beginExecute(Command[] commands) {
         Set<EvaluatedCommand> eval = new HashSet<>();
 
         for (Command c : commands) {
             if (!validatePlayer(c)) continue;
 
-            EvaluatedCommand e = new EvaluatedCommand(c, getCommandType(c));
+            EvaluatedCommand e = new EvaluatedCommand(c);
             switch (e.type) {
                 case SCAN:
                 case STATS:
-                    e.valid = true;
+                    e.isValid = true;
                     break;
 
                 case ALLOCATE:
-                    e.valid = beginAlloc((CommandAllocate)c);
+                    e.isValid = beginAlloc((CommandAllocate)c);
                     break;
 
                 case FREE:
-                    e.valid = beginFree((CommandFree)c);
+                    e.isValid = beginFree((CommandFree)c);
                     break;
 
                 case RECOVER:
-                    e.valid = beginRecover((CommandRecover)c);
+                    e.isValid = beginRecover((CommandRecover)c);
                     break;
 
                 case FORTIFY:
-                    e.valid = beginFortify((CommandFortify)c);
+                    e.isValid = beginFortify((CommandFortify)c);
                     break;
 
                 case SWAP:
-                    e.valid = beginSwap((CommandSwap)c);
+                    e.isValid = beginSwap((CommandSwap)c);
             }
             eval.add(e);
         }
@@ -477,16 +458,15 @@ public class GameImplementation implements Game {
         return eval;
     }
 
-    List<Response> finalizeRespond2(Set<EvaluatedCommand> evaluated) {
+    private List<Response> finalizeRespond(Set<EvaluatedCommand> evaluated) {
         List<Response> results = new ArrayList<>();
 
         for (EvaluatedCommand ec : evaluated) {
             Response r = null;
             switch (ec.type) {
                 case SCAN:
-                    r = executeScan(
-                            (CommandScan)ec.command);
-                    break;
+                    // scan a legvegen, egyelore skip
+                    continue;
 
                 case STATS:
                     r = executeStats(
@@ -495,129 +475,49 @@ public class GameImplementation implements Game {
 
                 case ALLOCATE:
                     r = finalizeAlloc(
-                            (CommandAllocate)ec.command, ec.valid);
+                            (CommandAllocate)ec.command,
+                            ec.isValid);
                     break;
 
                 case FREE:
                     r = finalizeFree(
-                            (CommandFree)ec.command, ec.valid);
+                            (CommandFree)ec.command,
+                            ec.isValid);
                     break;
 
                 case RECOVER:
                     r = finalizeRecover(
-                            (CommandRecover)ec.command, ec.valid);
+                            (CommandRecover)ec.command,
+                            ec.isValid);
                     break;
 
                 case FORTIFY:
                     r = finalizeFortify(
-                            (CommandFortify)ec.command, ec.valid);
+                            (CommandFortify)ec.command,
+                            ec.isValid);
                     break;
 
                 case SWAP:
                     r = finalizeSwap(
-                            (CommandSwap)ec.command, ec.valid);
+                            (CommandSwap)ec.command,
+                            ec.isValid);
                     break;
             }
             results.add(r);
         }
 
-        return results;
-    }
+        //TODO a scanneknek valahogy minden utan kene jonnie
+        for (EvaluatedCommand ec : evaluated)
+            if (ec.type == CommandType.SCAN)
+                results.add(executeScan((CommandScan)ec.command));
 
-    // osszes keres kiertekelese, azaz hogy ervenyesek-e v. nem
-    // eredmenyek eltarolasa es az ervenyes parancsok futtatasa (1. fazis)
-    @Deprecated
-    Map<Command, Boolean> beginExecute(Command[] commands) {
-        Map<Command, Boolean> evaluated = new HashMap<>();
-        for (Command c : commands) {
-            if (validatePlayer(c)) {
-                CommandType cmdType = getCommandType(c);
-
-                switch (cmdType) {
-                    case SCAN:
-                    case STATS:
-                        evaluated.put(c, true);
-                        break;
-
-                    case ALLOCATE:
-                        evaluated.put(
-                            c, beginAlloc((CommandAllocate)c));
-                        break;
-
-                    case FREE:
-                        evaluated.put(
-                            c, beginFree((CommandFree)c));
-                        break;
-
-                    case RECOVER:
-                        evaluated.put(
-                            c, beginRecover((CommandRecover)c));
-                        break;
-
-                    case FORTIFY:
-                        evaluated.put(
-                            c, beginFortify((CommandFortify)c));
-                        break;
-
-                    case SWAP:
-                        evaluated.put(
-                            c, beginSwap((CommandSwap)c));
-                }
-            } else {
-                System.out.println("Command or player invalid");
-            }
-        }
-        return evaluated;
-    }
-
-    // valaszadas a kiertekelt parancsokra (minden parancsra kell valasz)
-    // P.S.: a scan csak itt fut le valojaban (de lehet hogy ennek is a leg-
-    //       vegere kene tenni a fortify miatt
-    @Deprecated
-    List<Response> finalizeRespond(Map<Command, Boolean> evaluated) {
-        List<Response> results = new ArrayList<>();
-        for (Command c : evaluated.keySet()) {
-            CommandType cmdType = getCommandType(c);
-
-            Response r = null;
-            switch (cmdType) {
-                case SCAN:
-                    r = executeScan((CommandScan)c);
-                    break;
-
-                case STATS:
-                    r = executeStats((CommandStats)c);
-                    break;
-
-                case ALLOCATE:
-                    r = finalizeAlloc((CommandAllocate)c, evaluated.get(c));
-                    break;
-
-                case FREE:
-                    r = finalizeFree((CommandFree)c, evaluated.get(c));
-                    break;
-
-                case RECOVER:
-                    r = finalizeRecover((CommandRecover)c, evaluated.get(c));
-                    break;
-
-                case FORTIFY:
-                    r = finalizeFortify((CommandFortify)c, evaluated.get(c));
-                    break;
-
-                case SWAP:
-                    r = finalizeSwap((CommandSwap)c, evaluated.get(c));
-            }
-
-            results.add(r);
-        }
         return results;
     }
 
     @Override
     public List<PlayerScore> getScores() {
         List<PlayerScore> scores = new ArrayList<>();
-        for (RegisteredPlayer p : players) {
+        for (Player p : playersSet.keySet()) {
             scores.add(calculateScore(p));
         }
         return scores;
@@ -629,7 +529,6 @@ public class GameImplementation implements Game {
 //        for (Player p : players) {
 //            sb.append("Player: " + p.getName() + '\n');
 //        }
-
 
         sb.append("\n[");
         for (int i = 0; i < cells.length; ++i){
