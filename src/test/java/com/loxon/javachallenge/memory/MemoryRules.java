@@ -402,7 +402,7 @@ public class MemoryRules {
         game.nextRound( // allocate cells
             allocate(pA, 12, 15));
 
-        final Player pC = game.registerPlayer("c");
+        final Player pC = game.registerPlayer("command");
         assertResponse( // swap in a chain with 3 player
             game.nextRound(
                 swap(pB, 15, 13),
