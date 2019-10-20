@@ -1,0 +1,11 @@
+/apidocs/
+
+/target/
+
+/src/main/java/com/loxon/javachallenge/memory/api/communication/general/
+/src/main/java/com/loxon/javachallenge/memory/api/communication/commands/
+
+pom.xml
+
+
+
