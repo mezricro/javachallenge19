@@ -198,6 +198,8 @@ public class Cell {
         }
     }
 
+    // pontosan 1 swap esetén számít sikeresnek,
+    // egyébként elbaszódik az egész
     public boolean successfulySwapped() {
         return swapHistory.size() == 1;
     }
