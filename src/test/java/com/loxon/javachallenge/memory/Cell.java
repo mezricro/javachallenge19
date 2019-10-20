@@ -2,7 +2,11 @@ package com.loxon.javachallenge.memory;
 
 import com.loxon.javachallenge.memory.api.MemoryState;
 import com.loxon.javachallenge.memory.api.Player;
-import jdk.nashorn.internal.codegen.MethodEmitter;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 
 public class Cell {
     public Cell(Integer id, MemoryState state,  Player owner) {
@@ -14,6 +18,14 @@ public class Cell {
     private Player owner;
     private MemoryState state;
     private Integer id;
+    boolean isFortifying = false;
+
+    Set<Cell> swapHistory = new HashSet<>();
+    static Set<Cell> swapCorruptions = new HashSet<>();
+
+    public static void clearSwapHistory() {
+        swapCorruptions.clear();
+    }
 
     // a cella koronket max 1x irhato, egyebkent
     // korruptalodik
@@ -21,15 +33,20 @@ public class Cell {
     public boolean validWrite() {
         return writeCount < 2;
     }
-    boolean canWrite() {
-        if (state == MemoryState.SYSTEM ||
-            state == MemoryState.FORTIFIED) {
 
+    boolean isPermanent() {
+        return state == MemoryState.SYSTEM ||
+               state == MemoryState.FORTIFIED;
+    }
+
+    boolean canWrite() {
+        if (isPermanent()) {
             return false;
         }
 
         if (writeCount != 0) {
             this.state = MemoryState.CORRUPT;
+
             return false;
         }
         else {
@@ -38,6 +55,7 @@ public class Cell {
         }
     }
     void resetWrites() {
+        swapHistory.clear();
         writeCount = 0;
     }
 
@@ -116,7 +134,6 @@ public class Cell {
     // 1., fortify igeny
     // 2., kor vegen meg kell nezni, mas nem e
     //     irt a cellaba (ha igen --> korrupt)
-    boolean isFortifying = false;
     public void beginFortify() {
         isFortifying = true;
     }
@@ -133,14 +150,56 @@ public class Cell {
         return false;
     }
 
-
-
+    // megcsereli a cellak adatait. Eleg lenne
+    // ID-t cserelni, ha nem ez alapjan lennenek
+    // indexelve a jatekban (array index == id)
     public void swap(Cell c) {
-        //TODO ez mifaszt csinal??
+        if (canWrite() && c.canWrite()) {
+            Player playerTemp = c.owner;
+            MemoryState stateTemp = c.state;
+            boolean fortifyTemp = c.isFortifying;
+            int writesTemp = c.writeCount;
+
+            c.owner = this.owner;
+            c.state = this.state;
+            c.isFortifying = this.isFortifying;
+            c.writeCount = this.writeCount;
+
+            this.owner = playerTemp;
+            this.state = stateTemp;
+            this.isFortifying = fortifyTemp;
+            this.writeCount = writesTemp;
+
+            this.swapHistory.add(c);
+            c.swapHistory.add(this);
+        } else {
+            this.corruptSwap();
+            c.corruptSwap();
+        }
     }
 
-    public boolean hasOwner() {
-        return owner != null;
+    // minden rosszul swappelt cellat corruptra allit,
+    // vegigvonul az osszes erintett cellan - de csak
+    // egyszer. Ezt en csak a swapHistory-val meg a
+    // swapCorruptions-szel tudtam megoldani. Biztos
+    // lehetne valahogy szebben
+    // FIXME
+    void corruptSwap() {
+        if (isPermanent()) return;
+
+        if (!swapCorruptions.contains(this)) {
+            this.state = MemoryState.CORRUPT;
+            swapCorruptions.add(this);
+
+            for (Cell c : swapHistory) {
+                c.corruptSwap();
+            }
+            swapHistory.clear();
+        }
+    }
+
+    public boolean successfulySwapped() {
+        return swapHistory.size() == 1;
     }
 
     private static char convertState(MemoryState state) {
@@ -157,7 +216,7 @@ public class Cell {
     @Override
     public String toString() {
         String playerId;
-        if (hasOwner()) {
+        if (owner != null) {
             String ownerName = owner.getName();
             switch (ownerName.length()) {
                 case 0:
