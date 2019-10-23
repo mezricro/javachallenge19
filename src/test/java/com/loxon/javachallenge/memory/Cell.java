@@ -3,80 +3,73 @@ package com.loxon.javachallenge.memory;
 import com.loxon.javachallenge.memory.api.MemoryState;
 import com.loxon.javachallenge.memory.api.Player;
 
-import java.util.HashSet;
-import java.util.Set;
+import java.util.*;
 
 public class Cell {
-    public Cell(Integer id, MemoryState state,  Player owner) {
+    public Cell(final Integer id, final MemoryState state,  final Player owner) {
         this.owner = owner;
         this.state = state;
         this.id = id;
     }
 
+    public Cell(final Integer id, final MemoryState state) {
+        this(id, state, null);
+    }
+
     private Player owner;
     private MemoryState state;
     private Integer id;
-    private boolean isFortifying = false;
 
-    private Set<Cell> swapHistory = new HashSet<>();
-    private static Set<Cell> swapCorruptions = new HashSet<>();
+    // nem kell swap lista, helyette ez a flag
+    private boolean failedSwap = false;
 
+    // eleg csak a cella id-kat es a veluk cserelni probalt cellak
+    // id-jat tarolni
+    private static HashMap<Integer, Set<Integer>> swapHistory = new HashMap<>();
     public static void clearSwapHistory() {
-        swapCorruptions.clear();
+        swapHistory.clear();
     }
 
     // a cella koronket max 1x irhato, egyebkent
     // korruptalodik
-    private int writeCount = 0;
-    public boolean validWrite() {
-        return writeCount < 2;
-    }
-
-    private boolean isPermanent() {
-        return state == MemoryState.SYSTEM ||
-               state == MemoryState.FORTIFIED;
-    }
-
+    private boolean wasWritten = false;
     private boolean canWrite() {
-        if (isPermanent()) return false;
+        boolean cantWrite =
+                state == MemoryState.SYSTEM ||
+                state == MemoryState.FORTIFIED ||
+                wasWritten;
 
-        if (writeCount != 0) {
+        if (cantWrite && wasWritten) {
             this.state = MemoryState.CORRUPT;
-            return false;
         }
-        else {
-            writeCount++;
-            return true;
-        }
+
+        return !cantWrite;
     }
 
-    void resetWrites() {
-        swapHistory.clear();
-        writeCount = 0;
+    private boolean canWrite(boolean updateStatus) {
+        boolean canWrite = canWrite();
+        if (updateStatus) { wasWritten = true; }
+        return canWrite;
+    }
+
+    public void resetWrites() {
+        failedSwap = false;
+        wasWritten = false;
     }
 
     // jatekostol fugg a fortified es allocated statusz
     public MemoryState getState(Player p) {
-        switch (state) {
-            case FORTIFIED:
-                if (owner == p) {
-                    return MemoryState.OWNED_FORTIFIED;
-                }
-                else {
-                    return MemoryState.FORTIFIED;
-                }
+        MemoryState retVal = state;
 
-            case ALLOCATED:
-                if (owner == p) {
-                    return MemoryState.OWNED_ALLOCATED;
-                }
-                else {
-                    return MemoryState.ALLOCATED;
-                }
+        if (owner != null && owner == p) {
+            if (state == MemoryState.FORTIFIED)
+                retVal = MemoryState.OWNED_FORTIFIED;
 
-            default:
-                return state;
+            if (state == MemoryState.ALLOCATED)
+                retVal = MemoryState.OWNED_ALLOCATED;
         }
+
+        return retVal;
     }
 
     public MemoryState getState() {
@@ -90,137 +83,127 @@ public class Cell {
     public int getBlock() { return id / 4; }
 
     public void allocate(Player p) {
-        if (!canWrite()) return;
+        if (canWrite() &&
+            state == MemoryState.FREE) {
 
-        if (state == MemoryState.FREE) {
             state = MemoryState.ALLOCATED;
             owner = p;
+
+            wasWritten = true;
         }
     }
 
     public void free() {
-        if (!canWrite()) return;
-
-        if (state == MemoryState.ALLOCATED ||
-            state == MemoryState.CORRUPT) {
+        if (canWrite() &&
+            (state == MemoryState.ALLOCATED ||
+             state == MemoryState.CORRUPT)) {
 
             state = MemoryState.FREE;
             owner = null;
+
+            wasWritten = true;
         }
     }
 
     public void recover(Player p) {
-        if (!canWrite()) return;
+        if (canWrite()) {
+            switch (state) {
+                case CORRUPT:
+                    state = MemoryState.ALLOCATED;
+                    owner = p;
+                    break;
 
-        switch (state) {
-            case CORRUPT:
-                state = MemoryState.ALLOCATED;
-                owner = p;
-                break;
+                case ALLOCATED:
+                case FREE:
+                    state = MemoryState.CORRUPT;
+                    break;
+            }
 
-            case ALLOCATED:
-            case FREE:
-                state = MemoryState.CORRUPT;
-                break;
+            wasWritten = true;
         }
     }
 
+    public boolean fortify() {
+        boolean canFortify =
+                canWrite() &&
+                state == MemoryState.ALLOCATED;
 
-    // fortify 2 lepesben:
-    // 1., fortify igeny
-    // 2., kor vegen meg kell nezni, mas nem e
-    //     irt a cellaba (ha igen --> korrupt)
-    public void beginFortify() {
-        isFortifying = true;
-    }
-
-    public boolean finishFortify() {
-        if (canWrite() &&
-            isFortifying &&
-            state == MemoryState.ALLOCATED) {
-
+        if (canFortify) {
             state = MemoryState.FORTIFIED;
-            return true;
         }
 
-        return false;
-    }
-
-    // megcsereli a cellak adatait. Eleg lenne
-    // ID-t cserelni, ha nem ez alapjan lennenek
-    // indexelve a jatekban (array index == id)
-    @Deprecated
-    public void swap(Cell c) {
-        if (canWrite() && c.canWrite()) {
-            Player playerTemp = c.owner;
-            MemoryState stateTemp = c.state;
-            boolean fortifyTemp = c.isFortifying;
-            int writesTemp = c.writeCount;
-
-            c.owner = this.owner;
-            c.state = this.state;
-            c.isFortifying = this.isFortifying;
-            c.writeCount = this.writeCount;
-
-            this.owner = playerTemp;
-            this.state = stateTemp;
-            this.isFortifying = fortifyTemp;
-            this.writeCount = writesTemp;
-
-            this.swapHistory.add(c);
-            c.swapHistory.add(this);
-        } else {
-            this.corruptSwap();
-            c.corruptSwap();
-        }
+        return canFortify;
     }
 
     // csereljuk ki oket az arrayben + az id-juket
     // igy nem kell tagonket masolgatni (ha meg esetleg
     // adnank hozza fieldeket), viszont kozvetlenul
     // bele kell nyulni a cella arraybe :/
+    @Deprecated
     public void swap2(final Integer targetID, Cell[] grid) {
         Cell c = grid[targetID];
 
-        if (canWrite() && c.canWrite()) {
+        Set<Integer> history = swapHistory
+                .putIfAbsent(this.id, new HashSet<>(
+                        Collections.singletonList(targetID)));
+
+        if (history != null) history.add(targetID);
+
+        if (canWrite(true) && c.canWrite(true)) {
             grid[targetID] = this;
             grid[this.id] = c;
 
             c.id = this.id;
-            c.swapHistory.add(this);
-
             this.id = targetID;
-            this.swapHistory.add(c);
         } else {
-            c.corruptSwap();
-            this.corruptSwap();
+            c.corruptSwap(grid);
+            this.corruptSwap(grid);
         }
     }
 
-    // minden rosszul swappelt cellat corruptra allit,
-    // vegigvonul az osszes erintett cellan - de csak
-    // egyszer. Ezt en csak a swapHistory-val meg a
-    // swapCorruptions-szel tudtam megoldani. Biztos
-    // lehetne valahogy szebben
-    // FIXME
-    void corruptSwap() {
-        if (isPermanent()) return;
+    public static void swap(
+            final Integer id1,
+            final Integer id2,
+            Cell[] grid) {
 
-        if (!swapCorruptions.contains(this)) {
-            this.state = MemoryState.CORRUPT;
-            swapCorruptions.add(this);
+        Set<Integer> history = swapHistory
+                .putIfAbsent(id1, new HashSet<>(
+                        Collections.singletonList(id2)));
 
-            for (Cell c : swapHistory) {
-                c.corruptSwap();
+        if (history != null) history.add(id2);
+
+        Cell c1 = grid[id1];
+        Cell c2 = grid[id2];
+
+        if (c1.canWrite(true) && c2.canWrite(true)) {
+            grid[id1] = c2;
+            grid[id2] = c1;
+
+            c2.id = id1;
+            c1.id = id2;
+        } else {
+            c1.corruptSwap(grid);
+            c2.corruptSwap(grid);
+        }
+    }
+
+    private void corruptSwap(Cell[] grid) {
+        this.state = MemoryState.CORRUPT;
+        this.failedSwap = true;
+
+        Set<Integer> corrupt = swapHistory.get(this.id);
+
+        if (corrupt != null) {
+            swapHistory.remove(this.id);
+
+            for (Integer id : corrupt) {
+                grid[id].corruptSwap(grid);
             }
-            swapHistory.clear();
         }
     }
 
-    // pontosan 1 swap esetén számít sikeresnek,
-    // egyébként elbaszódik az egész
     public boolean successfulySwapped() {
-        return swapHistory.size() == 1;
+        return !failedSwap;
     }
 
     private static char convertState(MemoryState state) {
@@ -257,11 +240,11 @@ public class Cell {
         }
 
         if (state == MemoryState.SYSTEM) {
-            return "(SYS )";
+            return id + ": (SYS )";
         } else if (state == MemoryState.FREE) {
-            return "(FREE)";
+            return id + ": (FREE)";
         } else {
-            return "(" + Cell.convertState(state) + ":" + playerId + ")";
+            return id + ": (" + Cell.convertState(state) + ":" + playerId + ")";
         }
     }
 }

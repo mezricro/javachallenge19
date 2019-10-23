@@ -12,12 +12,11 @@ import com.loxon.javachallenge.memory.api.communication.general.Response;
 import java.util.*;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
 public class GameImplementation implements Game {
-//    private List<RegisteredPlayer> players = new ArrayList<>();
-
     // nem kell kulon osztaly, meg igy gyorsabb is
-    private Map<Player, Boolean> playersSet = new HashMap<>();
+    private Map<Player, Boolean> players = new HashMap<>();
     private Cell[] cells;
 
     private int maxRounds;
@@ -26,7 +25,7 @@ public class GameImplementation implements Game {
     @Override
     public Player registerPlayer(String name) {
         Player p = new Player(name);
-        playersSet.put(p, true);
+        players.put(p, true);
         return p;
     }
 
@@ -41,107 +40,42 @@ public class GameImplementation implements Game {
 
         cells = new Cell[initialMemory.size()];
         for (int i = 0; i < initialMemory.size(); ++i){
-            cells[i] = new Cell(i, initialMemory.get(i), null);;
+            cells[i] = new Cell(i, initialMemory.get(i));
         }
     }
 
-    private boolean validatePlayer(final Command c) {
-        Player p = c.getPlayer();
-        if (playersSet.containsKey(p) && playersSet.get(p)) {
-            playersSet.replace(p, false);
-            return true;
-        } else {
-            return false;
-        }
-    }
+    private boolean isPlayerValid(Player p) {
+        boolean isValid =
+                players.containsKey(p) &&
+                players.get(p);
 
-    // megmondja, h az adott parancs ervenyes-e
-    // * scan ervenyes, ha jo az intervallum
-    // * iro parancsok ervenyesek, ha megfelelo a parameterek szam + erteke
-    private boolean validateCommand(Command c, CommandType type) {
-        switch (type) {
-            case SCAN:
-                Integer cell = ((CommandScan)c).getCell();
-                return cell != null && cell >= 0 && cell < cells.length;
+        if (isValid) players.replace(p, false);
 
-            case SWAP:
-                List<Integer> swapping = ((CommandGeneral)c).getCells();
-
-                // need exactly 2 cells
-                if (swapping.size() != 2) {
-                    return false;
-                }
-
-                // cannot be null or out of range
-                for (Integer i : swapping) {
-                    if (i == null)
-                        return false;
-
-                    if (i < 0 || i >= cells.length)
-                        return false;
-                }
-
-                break;
-
-            case ALLOCATE:
-            case FREE:
-            case RECOVER:
-            case FORTIFY:
-                List<Integer> range = ((CommandGeneral)c).getCells();
-
-                // check for more than 2 ids
-                if (range.size() > 2)
-                    return false;
-
-                // check if ids are in range
-                int block = -1;
-                for (Integer i : range) {
-                    if (i == null)
-                        continue;
-
-                    if (block == -1)
-                        block = i / 4;
-
-                    if (i < 0 || i >= cells.length || block != i / 4)
-                        return false;
-                }
-                break;
-
-            case UNKNOWN:
-                return false;
-        }
-
-        return true;
-    }
-
-    private List<MemoryState> getBlockStates(int cellId, Player p) {
-        List<MemoryState> states = new ArrayList<>(4);
-
-        for (Cell c : cells)
-            if (c.getBlock() == cellId / 4)
-                states.add(c.getState(p));
-
-        return states;
+        return isValid;
     }
 
     // scan - mindig valid, ha jo az index, de csak a kor vegen fut
-    private ResponseScan executeScan(CommandScan scan) {
-        if (validateCommand(scan, CommandType.SCAN)) {
+    private ResponseScan respondScan(CommandScan scan, boolean isValid) {
+        List<MemoryState> states = new ArrayList<>(4);
+        Integer firstCell = -1;
+        Player p = scan.getPlayer();
+
+        if (isValid) {
             // a blokk elso cellaja
-            Integer firstCell = scan.getCell();
+            firstCell = scan.getCell();
             firstCell = firstCell - (firstCell % 4);
 
-            Player p = scan.getPlayer();
-            return new ResponseScan(
-                p, firstCell, getBlockStates(firstCell, p));
-        } else {
-            return new ResponseScan(
-                scan.getPlayer(), -1, Collections.emptyList());
+            for (Cell c : cells)
+                if (c.getBlock() == firstCell / 4)
+                    states.add(c.getState(p));
+
         }
+
+        return new ResponseScan(p, firstCell, states);
     }
 
     // stats - mindig valid, NEM a kor vegen fut!
-    private ResponseStats executeStats(CommandStats stats) {
+    private ResponseStats respondStats(CommandStats stats) {
         ResponseStats s = new ResponseStats(stats.getPlayer());
 
         int allocated = 0;
@@ -150,6 +84,7 @@ public class GameImplementation implements Game {
         int system = 0;
         int fortified = 0;
         int owned = 0;
+
         for (Cell c : cells) {
             switch (c.getState()) {
                 case ALLOCATED:
@@ -199,112 +134,65 @@ public class GameImplementation implements Game {
 
     // kozos begin function, csak a cellan torteno modositas
     // valtozik (tipustol fuggoen)
-    private boolean beginGeneral(
-            CommandGeneral cmd,
-            CommandType type,
-            Consumer<Cell> beginAction) {
-
-        if (validateCommand(cmd, type)) {
-            for (Integer i : cmd.getCells())
-                if (i != null)
-                    beginAction.accept(cells[i]);
-
-            return true;
-        } else {
-            return false;
-        }
+    private void executeGeneral(CommandGeneral cmd, Consumer<Cell> beginAction) {
+        for (Integer i : cmd.getCells())
+            if (i != null)
+                beginAction.accept(cells[i]);
     }
 
-    private boolean beginAlloc(CommandAllocate alloc) {
-        return beginGeneral(alloc, CommandType.ALLOCATE,
-                (cell) -> { cell.allocate(alloc.getPlayer()); });
+    private void allocate(final CommandAllocate cmd) {
+        executeGeneral(cmd, c -> c.allocate(cmd.getPlayer()));
     }
 
-    private boolean beginFree(CommandFree free) {
-        return beginGeneral(free, CommandType.FREE,
-                (cell) -> { cell.free(); });
+    private void free(final CommandFree cmd) {
+        executeGeneral(cmd, c -> c.free());
     }
 
-    private boolean beginRecover(CommandRecover rec) {
-        return beginGeneral(rec, CommandType.RECOVER,
-                (cell) -> { cell.recover(rec.getPlayer()); });
+    private void recover(final CommandRecover cmd) {
+        executeGeneral(cmd, c -> c.recover(cmd.getPlayer()));
     }
 
-    private boolean beginFortify(CommandFortify fort) {
-        return beginGeneral(fort, CommandType.RECOVER,
-                (cell) -> { cell.beginFortify(); });
+    private void swap(final CommandSwap cmd) {
+        List<Integer> toSwap = cmd.getCells();
+        Cell.swap(toSwap.get(0), toSwap.get(1), cells);
     }
 
-    // swap nem beginGeneral alapu
-    private boolean beginSwap(CommandSwap swap) {
-        if (validateCommand(swap, CommandType.SWAP)) {
-            List<Integer> sw = swap.getCells();
+    private ResponseSuccessList respondGeneral(
+            EvaluatedCommand c, Predicate<Cell> successCondition) {
 
-            Integer c1 = sw.get(0);
-            Integer c2 = sw.get(1);
-            cells[c1].swap2(c2, cells);
+        CommandGeneral gen = (CommandGeneral)c.command;
 
-            return true;
-        } else {
-            return false;
-        }
-    }
-
-    // kozos finalize function, csak a siker feltetelet kell megadni
-    private ResponseSuccessList finalizeGeneral(
-            CommandGeneral c,
-            boolean valid,
-            Predicate<Cell> successCondition) {
-
-        List<Integer> succ = new ArrayList<>();
-        for (Integer i : c.getCells()) {
-            if (valid &&
-                    i != null &&
+        List<Integer> succ = new ArrayList<>(2);
+        if (c.isValid) {
+            for (Integer i : gen.getCells()) {
+                if (i != null &&
                     successCondition.test(cells[i])) {
 
-                succ.add(i);
+                    succ.add(i);
+                }
             }
         }
-
         return new ResponseSuccessList(c.getPlayer(), succ);
     }
 
-    private ResponseSuccessList finalizeAlloc(CommandAllocate alloc, boolean valid) {
-        return finalizeGeneral(alloc, valid,
-                (cell) -> {
-                    return cell.getOwner() == alloc.getPlayer() &&
-                           cell.getState() == MemoryState.ALLOCATED;
-                });
+    private ResponseSuccessList respondAllocRecover(EvaluatedCommand allocRecover) {
+        return respondGeneral(allocRecover, cell ->
+                cell.getState(allocRecover.getPlayer()) == MemoryState.OWNED_ALLOCATED);
     }
 
-    private ResponseSuccessList finalizeFree(CommandFree free, boolean valid) {
-        return finalizeGeneral(free, valid,
-                (cell) -> {
-                    return cell.validWrite() &&
-                           cell.getState() == MemoryState.FREE;
-                });
+    private ResponseSuccessList respondFree(EvaluatedCommand free) {
+        return respondGeneral(free,
+                cell -> cell.getState() == MemoryState.FREE);
     }
 
-    private ResponseSuccessList finalizeRecover(CommandRecover rec, boolean valid) {
-        return finalizeGeneral(rec, valid,
-                (cell) -> {
-                    return cell.validWrite() &&
-                           cell.getState() == MemoryState.ALLOCATED;
-                });
+    private ResponseSuccessList respondFortify(EvaluatedCommand fort) {
+        return respondGeneral(fort,
+                cell -> cell.fortify());
     }
 
-    private ResponseSuccessList finalizeFortify(CommandFortify fort, boolean valid) {
-        return finalizeGeneral(fort, valid,
-                (cell) -> {
-                    return cell.finishFortify();
-                });
-    }
-
-    private ResponseSuccessList finalizeSwap(CommandSwap swap, boolean valid) {
-        return finalizeGeneral(swap, valid,
-                (cell) -> {
-                    return cell.successfulySwapped();
-                });
+    private ResponseSuccessList respondSwap(EvaluatedCommand swap) {
+        return respondGeneral(swap,
+                cell -> cell.successfulySwapped());
     }
 
     @Override
@@ -323,13 +211,12 @@ public class GameImplementation implements Game {
         Cell.clearSwapHistory();
 
         //TODO use iterator to reset player status
-        for (Map.Entry<Player, Boolean> e : playersSet.entrySet())
-            e.setValue(true);
+        players.entrySet().forEach(e -> e.setValue(true));
 
         // evaluate commands and respond
-        Set<EvaluatedCommand> evaluated = beginExecute(requests);
+        Set<EvaluatedCommand> evaluated = evaluate(requests);
 
-        return finalizeRespond(evaluated);
+        return respond(evaluated);
     }
 
     private PlayerScore calculateScore(Player p) {
@@ -341,8 +228,8 @@ public class GameImplementation implements Game {
 
         int currentBlock = -1;
         int blockCellsOwned = 0;
-        for (Cell c : cells) {
 
+        for (Cell c : cells) {
             if (c.getOwner() == p) {
                 MemoryState state = c.getState(p);
                 if (state == MemoryState.OWNED_ALLOCATED) {
@@ -377,150 +264,187 @@ public class GameImplementation implements Game {
         return score;
     }
 
-    // a kiertekelesek eltarolasa (+ HasSet olvasas)
-    // egy kicsit felgyorsitja a dolgot, meg jobban olvashato is lesz
     private class EvaluatedCommand {
         final CommandType type;
         final Command command;
-        public boolean isValid;
+        final boolean isValid;
 
         public EvaluatedCommand(Command command) {
             this.command = command;
-            this.type = getCommandType(command);
+            this.type = GameImplementation.getCommandType(command);
+            this.isValid = isCommandValid(command);
         }
 
-        // CommandType-kent adja vissza a parancs tipusat,
-        // hogy konnyebben lehessen kezelni
-        private CommandType getCommandType(Command c) {
-            Class cls = c.getClass();
-
-            if (cls == CommandAllocate.class) {
-                return CommandType.ALLOCATE;
-            }
-            else if (cls == CommandFortify.class) {
-                return CommandType.FORTIFY;
-            }
-            else if (cls == CommandFree.class) {
-                return CommandType.FREE;
-            }
-            else if (cls == CommandRecover.class) {
-                return CommandType.RECOVER;
-            }
-            else if (cls == CommandScan.class) {
-                return CommandType.SCAN;
-            }
-            else if (cls == CommandStats.class) {
-                return CommandType.STATS;
-            }
-            else if (cls == CommandSwap.class) {
-                return CommandType.SWAP;
-            }
-
-            return CommandType.UNKNOWN;
+        public Player getPlayer() {
+            return command.getPlayer();
         }
-    }
 
-    private Set<EvaluatedCommand> beginExecute(Command[] commands) {
-        Set<EvaluatedCommand> eval = new HashSet<>();
-
-        for (Command c : commands) {
-            if (!validatePlayer(c)) continue;
-
-            EvaluatedCommand e = new EvaluatedCommand(c);
-            switch (e.type) {
+        private boolean isCommandValid(Command c) {
+            switch (type) {
                 case SCAN:
-                case STATS:
-                    e.isValid = true;
+                    Integer cell = ((CommandScan)c).getCell();
+                    return cell != null && cell >= 0 && cell < cells.length;
+
+                case SWAP:
+                    List<Integer> swapping = ((CommandGeneral)c).getCells();
+
+                    // need exactly 2 cells
+                    if (swapping.size() != 2) {
+                        return false;
+                    }
+
+                    // cannot be null or out of range
+                    for (Integer i : swapping) {
+                        if (i == null)
+                            return false;
+
+                        if (i < 0 || i >= cells.length)
+                            return false;
+                    }
+
                     break;
 
                 case ALLOCATE:
-                    e.isValid = beginAlloc((CommandAllocate)c);
-                    break;
-
                 case FREE:
-                    e.isValid = beginFree((CommandFree)c);
-                    break;
-
                 case RECOVER:
-                    e.isValid = beginRecover((CommandRecover)c);
-                    break;
-
                 case FORTIFY:
-                    e.isValid = beginFortify((CommandFortify)c);
+                    List<Integer> range = ((CommandGeneral)c).getCells();
+
+                    // check for more than 2 ids
+                    if (range.size() > 2)
+                        return false;
+
+                    // check if ids are in range
+                    int block = -1;
+                    for (Integer i : range) {
+                        if (i == null)
+                            continue;
+
+                        if (block == -1)
+                            block = i / 4;
+
+                        if (i < 0 || i >= cells.length || block != i / 4)
+                            return false;
+                    }
                     break;
 
-                case SWAP:
-                    e.isValid = beginSwap((CommandSwap)c);
+                case UNKNOWN:
+                    return false;
             }
-            eval.add(e);
+
+            return true;
+        }
+    }
+
+    private static CommandType getCommandType(Command c) {
+        Class cls = c.getClass();
+
+        if (cls == CommandAllocate.class) {
+            return CommandType.ALLOCATE;
+        }
+        else if (cls == CommandFortify.class) {
+            return CommandType.FORTIFY;
+        }
+        else if (cls == CommandFree.class) {
+            return CommandType.FREE;
+        }
+        else if (cls == CommandRecover.class) {
+            return CommandType.RECOVER;
+        }
+        else if (cls == CommandScan.class) {
+            return CommandType.SCAN;
+        }
+        else if (cls == CommandStats.class) {
+            return CommandType.STATS;
+        }
+        else if (cls == CommandSwap.class) {
+            return CommandType.SWAP;
+        }
+
+        return CommandType.UNKNOWN;
+    }
+
+    private Set<EvaluatedCommand> evaluate(Command[] commands) {
+        Set<EvaluatedCommand> eval = Arrays
+                .stream(commands)
+                .filter(cmd -> isPlayerValid(cmd.getPlayer()))
+                .map(cmd -> new EvaluatedCommand(cmd))
+                .collect(Collectors.toSet());
+
+        for (EvaluatedCommand ev : eval) {
+            if (ev.isValid) {
+                switch (ev.type) {
+                    case ALLOCATE:
+                        allocate((CommandAllocate)ev.command);
+                        break;
+
+                    case FREE:
+                        free((CommandFree)ev.command);
+                        break;
+
+                    case RECOVER:
+                        recover((CommandRecover)ev.command);
+                        break;
+
+                    case SWAP:
+                        swap((CommandSwap)ev.command);
+                        break;
+
+                    default:
+                        break;
+                }
+            }
         }
 
         return eval;
     }
 
-    private List<Response> finalizeRespond(Set<EvaluatedCommand> evaluated) {
+    private List<Response> respond(Set<EvaluatedCommand> evaluated) {
         List<Response> results = new ArrayList<>();
 
         for (EvaluatedCommand ec : evaluated) {
             Response r = null;
             switch (ec.type) {
-                case SCAN:
-                    // scan a legvegen, egyelore skip
-                    continue;
-
                 case STATS:
-                    r = executeStats(
-                            (CommandStats)ec.command);
+                    r = respondStats((CommandStats)ec.command);
                     break;
 
                 case ALLOCATE:
-                    r = finalizeAlloc(
-                            (CommandAllocate)ec.command,
-                            ec.isValid);
+                case RECOVER:
+                    r = respondAllocRecover(ec);
                     break;
 
                 case FREE:
-                    r = finalizeFree(
-                            (CommandFree)ec.command,
-                            ec.isValid);
-                    break;
-
-                case RECOVER:
-                    r = finalizeRecover(
-                            (CommandRecover)ec.command,
-                            ec.isValid);
-                    break;
-
-                case FORTIFY:
-                    r = finalizeFortify(
-                            (CommandFortify)ec.command,
-                            ec.isValid);
+                    r = respondFree(ec);
                     break;
 
                 case SWAP:
-                    r = finalizeSwap(
-                            (CommandSwap)ec.command,
-                            ec.isValid);
+                    r = respondSwap(ec);
                     break;
             }
-            results.add(r);
+            if (r != null) results.add(r);
         }
 
+        //TODO fortify is legyen a vegen
+        evaluated.stream()
+            .filter(ec -> ec.type == CommandType.FORTIFY)
+            .map(ec -> respondFortify(ec))
+            .forEach(ec -> results.add(ec));
+
         //TODO a scanneknek valahogy minden utan kene jonnie
-        for (EvaluatedCommand ec : evaluated)
-            if (ec.type == CommandType.SCAN)
-                results.add(executeScan((CommandScan)ec.command));
+        evaluated.stream()
+            .filter(ec -> ec.type == CommandType.SCAN)
+            .map(ec -> respondScan((CommandScan)ec.command, ec.isValid))
+            .forEach(resp -> results.add(resp));
 
         return results;
     }
 
     @Override
     public List<PlayerScore> getScores() {
-        List<PlayerScore> scores = new ArrayList<>();
-        for (Player p : playersSet.keySet()) {
-            scores.add(calculateScore(p));
-        }
-        return scores;
+        return players.keySet().stream()
+                .map(player -> calculateScore(player))
+                .collect(Collectors.toList());
     }
 
     @Override
