@@ -43,6 +43,7 @@ public class GameImplementation implements Game {
         }
     }
 
+
     // Preparation
     private boolean isPlayerValid(Player p) {
         boolean isValid =
@@ -54,7 +55,9 @@ public class GameImplementation implements Game {
         return isValid;
     }
 
+
     // Execution
+    // igazabol itt is lehetne EvaluatedCommand a parameter
     private void executeGeneral(CommandGeneral cmd, Consumer<Cell> beginAction) {
         for (Integer i : cmd.getCells())
             if (i != null)
@@ -108,6 +111,62 @@ public class GameImplementation implements Game {
         return CommandType.UNKNOWN;
     }
 
+    private boolean isCommandValid(Command c, CommandType type) {
+        switch (type) {
+            case SCAN:
+                Integer cell = ((CommandScan)c).getCell();
+                return cell != null && cell >= 0 && cell < cells.length;
+
+            case SWAP:
+                List<Integer> swapping = ((CommandGeneral)c).getCells();
+
+                // need exactly 2 cells
+                if (swapping.size() != 2) {
+                    return false;
+                }
+
+                // cannot be null or out of range
+                for (Integer i : swapping) {
+                    if (i == null)
+                        return false;
+
+                    if (i < 0 || i >= cells.length)
+                        return false;
+                }
+
+                break;
+
+            case ALLOCATE:
+            case FREE:
+            case RECOVER:
+            case FORTIFY:
+                List<Integer> range = ((CommandGeneral)c).getCells();
+
+                // check for more than 2 ids
+                if (range.size() > 2)
+                    return false;
+
+                // check if ids are in range
+                int block = -1;
+                for (Integer i : range) {
+                    if (i == null)
+                        continue;
+
+                    if (block == -1)
+                        block = i / 4;
+
+                    if (i < 0 || i >= cells.length || block != i / 4)
+                        return false;
+                }
+                break;
+
+            case UNKNOWN:
+                return false;
+        }
+
+        return true;
+    }
+
     private class EvaluatedCommand {
         final CommandType type;
         final Command command;
@@ -115,68 +174,12 @@ public class GameImplementation implements Game {
 
         public EvaluatedCommand(Command command) {
             this.command = command;
-            this.type = GameImplementation.getCommandType(command);
-            this.isValid = isCommandValid(command);
+            this.type = getCommandType(command);
+            this.isValid = isCommandValid(command, type);
         }
 
         public Player getPlayer() {
             return command.getPlayer();
-        }
-
-        private boolean isCommandValid(Command c) {
-            switch (type) {
-                case SCAN:
-                    Integer cell = ((CommandScan)c).getCell();
-                    return cell != null && cell >= 0 && cell < cells.length;
-
-                case SWAP:
-                    List<Integer> swapping = ((CommandGeneral)c).getCells();
-
-                    // need exactly 2 cells
-                    if (swapping.size() != 2) {
-                        return false;
-                    }
-
-                    // cannot be null or out of range
-                    for (Integer i : swapping) {
-                        if (i == null)
-                            return false;
-
-                        if (i < 0 || i >= cells.length)
-                            return false;
-                    }
-
-                    break;
-
-                case ALLOCATE:
-                case FREE:
-                case RECOVER:
-                case FORTIFY:
-                    List<Integer> range = ((CommandGeneral)c).getCells();
-
-                    // check for more than 2 ids
-                    if (range.size() > 2)
-                        return false;
-
-                    // check if ids are in range
-                    int block = -1;
-                    for (Integer i : range) {
-                        if (i == null)
-                            continue;
-
-                        if (block == -1)
-                            block = i / 4;
-
-                        if (i < 0 || i >= cells.length || block != i / 4)
-                            return false;
-                    }
-                    break;
-
-                case UNKNOWN:
-                    return false;
-            }
-
-            return true;
         }
     }
 
@@ -214,6 +217,7 @@ public class GameImplementation implements Game {
 
         return eval;
     }
+
 
     // Response
     private ResponseSuccessList respondGeneral(
@@ -349,13 +353,13 @@ public class GameImplementation implements Game {
             if (r != null) results.add(r);
         }
 
-        //TODO fortify is legyen a vegen
+        // fortify a vegen
         evaluated.stream()
             .filter(ec -> ec.type == CommandType.FORTIFY)
             .map(ec -> respondFortify(ec))
             .forEach(ec -> results.add(ec));
 
-        //TODO a scanneknek valahogy minden utan kene jonnie
+        // scan minden utan
         evaluated.stream()
             .filter(ec -> ec.type == CommandType.SCAN)
             .map(ec -> respondScan((CommandScan)ec.command, ec.isValid))
@@ -388,6 +392,7 @@ public class GameImplementation implements Game {
 
         return respond(evaluated);
     }
+
 
     // Scores
     private PlayerScore calculateScore(Player p) {
@@ -442,13 +447,35 @@ public class GameImplementation implements Game {
                 .collect(Collectors.toList());
     }
 
+
+    // kicsit atlathatobba tettem a jatekteret
     @Override
     public String visualize() {
+        final int cellSize = 14;
+
         StringBuilder sb = new StringBuilder();
 
-        sb.append("\n[");
+        StringBuilder roundStr = new StringBuilder();
+        roundStr.append(" Round ")
+                .append(roundCounter)
+                .append('\\')
+                .append(maxRounds)
+                .append(' ');
+
+        char[] adorner = new char[(cellSize * 4) / 2 - (roundStr.length() / 2) + 1];
+        for (int i = 0; i < adorner.length; i++) {
+            adorner[i] = '=';
+        }
+
+        sb.append('\n')
+          .append(adorner)
+          .append(roundStr)
+          .append(adorner)
+          .append("\n");
+
+        sb.append("[");
         for (int i = 0; i < cells.length; ++i){
-            sb.append(cells[i].toString());
+            sb.append(cells[i].toString(cellSize));
             if (i % 4 == 3) {
                 sb.append("]\n[");
             }
@@ -456,8 +483,6 @@ public class GameImplementation implements Game {
 
         String vis = sb.toString();
         vis = vis.substring(0, vis.length() - 1);
-        vis += "\nmax rounds: " + maxRounds + '\n';
-        vis += "current round: " + roundCounter;
 
         return vis;
     }
