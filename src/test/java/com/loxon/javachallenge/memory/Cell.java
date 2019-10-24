@@ -135,37 +135,7 @@ public class Cell {
         return canFortify;
     }
 
-    // csereljuk ki oket az arrayben + az id-juket
-    // igy nem kell tagonket masolgatni (ha meg esetleg
-    // adnank hozza fieldeket), viszont kozvetlenul
-    // bele kell nyulni a cella arraybe :/
-    @Deprecated
-    public void swap2(final Integer targetID, Cell[] grid) {
-        Cell c = grid[targetID];
-
-        Set<Integer> history = swapHistory
-                .putIfAbsent(this.id, new HashSet<>(
-                        Collections.singletonList(targetID)));
-
-        if (history != null) history.add(targetID);
-
-        if (canWrite(true) && c.canWrite(true)) {
-            grid[targetID] = this;
-            grid[this.id] = c;
-
-            c.id = this.id;
-            this.id = targetID;
-        } else {
-            c.corruptSwap(grid);
-            this.corruptSwap(grid);
-        }
-    }
-
-    public static void swap(
-            final Integer id1,
-            final Integer id2,
-            Cell[] grid) {
-
+    public static void swap(final Integer id1, final Integer id2, Cell[] grid) {
         Set<Integer> history = swapHistory
                 .putIfAbsent(id1, new HashSet<>(
                         Collections.singletonList(id2)));
