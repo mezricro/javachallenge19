@@ -2,7 +2,9 @@ package com.loxon.javachallenge.memory;
 
 import com.loxon.javachallenge.memory.api.MemoryState;
 import com.loxon.javachallenge.memory.api.Player;
+import javafx.util.Pair;
 
+import java.lang.reflect.Array;
 import java.util.*;
 
 public class Cell {
@@ -25,7 +27,7 @@ public class Cell {
 
     // eleg csak a cella id-kat es a veluk cserelni probalt cellak
     // id-jat tarolni
-    private static HashMap<Integer, Set<Integer>> swapHistory = new HashMap<>();
+    private static HashMap<Integer, List<Integer>> swapHistory = new HashMap<>();
     public static void clearSwapHistory() {
         swapHistory.clear();
     }
@@ -33,7 +35,7 @@ public class Cell {
     // a cella koronket max 1x irhato, egyebkent
     // korruptalodik
     private boolean wasWritten = false;
-    private boolean canWrite() {
+    private boolean canWrite(boolean updateStatus) {
         boolean cantWrite =
                 state == MemoryState.SYSTEM ||
                 state == MemoryState.FORTIFIED ||
@@ -43,13 +45,15 @@ public class Cell {
             this.state = MemoryState.CORRUPT;
         }
 
+        if (updateStatus) {
+            this.wasWritten = true;
+        }
+
         return !cantWrite;
     }
 
-    private boolean canWrite(boolean updateStatus) {
-        boolean canWrite = canWrite();
-        if (updateStatus) { wasWritten = true; }
-        return canWrite;
+    private boolean canWrite() {
+        return canWrite(false);
     }
 
     public void resetWrites() {
@@ -135,42 +139,22 @@ public class Cell {
         return canFortify;
     }
 
-    // csereljuk ki oket az arrayben + az id-juket
-    // igy nem kell tagonket masolgatni (ha meg esetleg
-    // adnank hozza fieldeket), viszont kozvetlenul
-    // bele kell nyulni a cella arraybe :/
-    @Deprecated
-    public void swap2(final Integer targetID, Cell[] grid) {
-        Cell c = grid[targetID];
+    public static void swap(final Integer id1, final Integer id2, Cell[] grid) {
+        List<Integer> history;
 
-        Set<Integer> history = swapHistory
-                .putIfAbsent(this.id, new HashSet<>(
-                        Collections.singletonList(targetID)));
-
-        if (history != null) history.add(targetID);
-
-        if (canWrite(true) && c.canWrite(true)) {
-            grid[targetID] = this;
-            grid[this.id] = c;
-
-            c.id = this.id;
-            this.id = targetID;
-        } else {
-            c.corruptSwap(grid);
-            this.corruptSwap(grid);
-        }
-    }
-
-    public static void swap(
-            final Integer id1,
-            final Integer id2,
-            Cell[] grid) {
-
-        Set<Integer> history = swapHistory
-                .putIfAbsent(id1, new HashSet<>(
+        // egyik cella id-je a masik elozmenyei koze...
+        history = swapHistory
+                .putIfAbsent(id1, new ArrayList<>(
                         Collections.singletonList(id2)));
-
         if (history != null) history.add(id2);
+
+        // ...es a masik cella id-je az egyik elozmenyei koze,
+        // igy id1 -> id2 es id2 -> id1
+        history = swapHistory
+                .putIfAbsent(id2, new ArrayList<>(
+                        Collections.singletonList(id1)));
+        if (history != null) history.add(id1);
+
 
         Cell c1 = grid[id1];
         Cell c2 = grid[id2];
@@ -182,22 +166,59 @@ public class Cell {
             c2.id = id1;
             c1.id = id2;
         } else {
-            c1.corruptSwap(grid);
-            c2.corruptSwap(grid);
+//            System.out.println("\nCorrupting...");
+//            swapHistory.forEach((k, v) -> System.out.println(k + ", " + v));
+
+            Cell.corruptSwap(id1, grid);
+            Cell.corruptSwap(id2, grid);
         }
     }
 
+    private static void corruptSwap(Integer start, Cell[] grid) {
+        // egy kiindulasi cellatol kezdve...
+        Cell startCell = grid[start];
+        startCell.state = MemoryState.CORRUPT;
+        startCell.failedSwap = true;
+
+//        System.out.println("Corrupting " + startCell);
+
+        // ...minden olyan cellat elrontunk, amihez koze volt
+        List<Integer> toCorrupt = swapHistory.get(start);
+        swapHistory.remove(start);
+
+        if (toCorrupt != null) {
+            for (Integer id : toCorrupt) {
+                Cell target = grid[id];
+
+                // csak azokat, amik meg nem lettek elrontva
+                if (!target.failedSwap) {
+//                    System.out.println("Corrupting " + target);
+                    target.state = MemoryState.CORRUPT;
+                    target.failedSwap = true;
+                }
+            }
+        }
+    }
+
+    @Deprecated
     private void corruptSwap(Cell[] grid) {
+        System.out.println("Corrupting " + this);
+
         this.state = MemoryState.CORRUPT;
         this.failedSwap = true;
 
-        Set<Integer> corrupt = swapHistory.get(this.id);
+        List<Integer> toCorrupt = swapHistory.get(this.id);
 
-        if (corrupt != null) {
+        if (toCorrupt != null) {
             swapHistory.remove(this.id);
 
-            for (Integer id : corrupt) {
-                grid[id].corruptSwap(grid);
+            for (Integer id : toCorrupt) {
+                Cell target = grid[id];
+
+                // csak azokat, amik meg nem lettek elrontva
+                if (!target.failedSwap) {
+                    target.corruptSwap(grid);
+                }
             }
         }
     }
@@ -207,14 +228,26 @@ public class Cell {
     }
 
     private static char convertState(MemoryState state) {
+        char stateChar = '?';
         switch(state) {
-            case FREE: return 'F';
-            case FORTIFIED: return '#';
-            case SYSTEM: return 'S';
-            case CORRUPT: return 'C';
-            case ALLOCATED: return 'A';
+            case FREE:
+            case FORTIFIED:
+                stateChar =  'F';
+                break;
+
+            case SYSTEM:
+                stateChar = 'S';
+                break;
+
+            case CORRUPT:
+                stateChar = 'C';
+                break;
+
+            case ALLOCATED:
+                stateChar = 'A';
+                break;
         }
-        return '?';
+        return stateChar;
     }
 
     @Override
@@ -239,12 +272,29 @@ public class Cell {
             playerId = "--";
         }
 
+        String str;
         if (state == MemoryState.SYSTEM) {
-            return id + ": (SYS )";
+            str = "(SYS )";
         } else if (state == MemoryState.FREE) {
-            return id + ": (FREE)";
+            str = "(FREE)";
         } else {
-            return id + ": (" + Cell.convertState(state) + ":" + playerId + ")";
+            str = "(" + Cell.convertState(state) + ":" + playerId + ")";
         }
+
+        return str + " @ " + id;
+    }
+
+    public String toString(int minLength) {
+        String str = this.toString();
+
+        if (str.length() < minLength) {
+            char[] padding = new char[minLength - str.length()];
+            for (int i = 0; i < padding.length; ++i) {
+                padding[i] = ' ';
+            }
+            str += new String(padding);
+        }
+
+        return str;
     }
 }
